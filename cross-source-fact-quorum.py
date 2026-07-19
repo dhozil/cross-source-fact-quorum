@@ -161,14 +161,8 @@ Respond with ONLY a compact JSON object, no markdown, no commentary:
 If the source does not contain enough information to answer, set
 "found" to false and "value" to "unknown".
 """
-                result_text = gl.nondet.exec_prompt(prompt)
-                cleaned = result_text.strip()
-                if cleaned.startswith("```"):
-                    cleaned = cleaned.strip("`")
-                    if cleaned.startswith("json"):
-                        cleaned = cleaned[4:]
                 try:
-                    parsed = json.loads(cleaned)
+                    parsed = gl.nondet.exec_prompt(prompt, response_format="json")
                 except Exception:
                     continue
 
@@ -189,7 +183,31 @@ If the source does not contain enough information to answer, set
                     best_value = v
                     best_count = count
 
-            majority_threshold = (sources_reached // 2) + 1
+            # Minimum reachability invariant: at least ceil(total/2) sources
+            # must be reachable before we even attempt a quorum decision.
+            # If too many sources are down, partial outage must produce
+            # no_quorum rather than letting one reachable source decide.
+            min_reachable = (total_sources // 2) + 1
+            if sources_reached < min_reachable:
+                final_value = NO_QUORUM
+                agreeing = 0
+                notes = (
+                    f"only {sources_reached} of {total_sources} sources reachable "
+                    f"(minimum {min_reachable} required)"
+                )
+                return json.dumps(
+                    {
+                        "notes": notes,
+                        "sources_agreeing": agreeing,
+                        "sources_total": total_sources,
+                        "value": final_value,
+                    },
+                    sort_keys=True,
+                )
+
+            # Majority is computed against total_sources (configured count),
+            # not sources_reached — so a partial outage cannot lower the bar.
+            majority_threshold = (total_sources // 2) + 1
             if best_count == 0 or best_count < majority_threshold:
                 final_value = NO_QUORUM
                 agreeing = 0
@@ -197,15 +215,16 @@ If the source does not contain enough information to answer, set
                 final_value = best_value
                 agreeing = best_count
 
-            notes = f"{sources_reached} of {total_sources} sources reachable"
+            notes = f"{sources_reached} of {total_sources} sources reachable, {agreeing} agreed"
 
             return json.dumps(
                 {
-                    "value": final_value,
+                    "notes": notes,
                     "sources_agreeing": agreeing,
                     "sources_total": total_sources,
-                    "notes": notes,
-                }
+                    "value": final_value,
+                },
+                sort_keys=True,
             )
 
         principle = """
