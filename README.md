@@ -14,7 +14,7 @@ submission is the exact source deployed at the address below.
 |---|---|
 | Network | GenLayer Bradbury Testnet |
 | Contract address | `0xB149fd61faE9Ea03D01a142f9e938d9D2c5B4064` |
-| Explorer | [[explorer-bradbury.genlayer.com/address/0x565F0ce830a7fE25A4D2E7A8CcFBa3D2EED46bE4](https://explorer-bradbury.genlayer.com/address/0xB149fd61faE9Ea03D01a142f9e938d9D2c5B4064)] |
+| Explorer | [[explorer-bradbury.genlayer.com/address/0xB149fd61faE9Ea03D01a142f9e938d9D2c5B4064](https://explorer-bradbury.genlayer.com/address/0xB149fd61faE9Ea03D01a142f9e938d9D2c5B4064)] |
 
 Anyone can independently verify the deployment and re-run
 `create_fact` / `submit_verification` against this address through the
