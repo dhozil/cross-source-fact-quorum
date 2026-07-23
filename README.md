@@ -13,12 +13,20 @@ submission is the exact source deployed at the address below.
 | | |
 |---|---|
 | Network | GenLayer Bradbury Testnet |
-| Contract address | `0xB149fd61faE9Ea03D01a142f9e938d9D2c5B4064` |
-| Explorer | [[explorer-bradbury.genlayer.com/address/0xB149fd61faE9Ea03D01a142f9e938d9D2c5B4064](https://explorer-bradbury.genlayer.com/address/0xB149fd61faE9Ea03D01a142f9e938d9D2c5B4064)] |
+| Contract address | `0x40dfD3AAcBd05A72df6ee1F8e7E0220D1023F413` |
+| Explorer | [explorer-bradbury.genlayer.com/address/0x40dfD3AAcBd05A72df6ee1F8e7E0220D1023F413](https://explorer-bradbury.genlayer.com/address/0x40dfD3AAcBd05A72df6ee1F8e7E0220D1023F413) |
 
 Anyone can independently verify the deployment and re-run
 `create_fact` / `submit_verification` against this address through the
 explorer or GenLayer Studio pointed at Bradbury.
+
+**Revision history**: this address reflects two rounds of fixes
+requested during review — (1) computing source majority against the
+configured source count with a minimum-reachability invariant, so a
+partial outage produces `no_quorum` instead of letting one reachable
+source decide, and (2) enforcing normalized URL uniqueness on
+`create_fact` so a repeated page cannot satisfy the multi-source
+majority requirement. See "Implementation notes" below for details.
 
 ## Why this is a distinct primitive
 
@@ -106,10 +114,30 @@ primitives on Bradbury:
   instantiated directly — this applies to both `source_urls: DynArray[str]`
   and `history: DynArray[VerificationEntry]` here.
 - Web content fetching uses `gl.nondet.web.render(url, mode="text")`.
-- LLM calls go through `gl.nondet.exec_prompt(...)`.
+- LLM calls go through `gl.nondet.exec_prompt(prompt, response_format="json")`,
+  which returns a parsed dict directly, and JSON responses passed to
+  the equivalence principle use `json.dumps(..., sort_keys=True)` so
+  key ordering can't cause spurious non-equivalence across validators.
 - Per-source fetch/parse failures are caught individually inside the
   non-deterministic block so one broken URL doesn't fail the whole
   verification — it's simply excluded from the quorum tally.
+
+**Source-independence rule (added after review):**
+- Majority is computed against the *configured* source count
+  (`total_sources`), never against how many sources happened to be
+  reachable. A minimum-reachability invariant (`> half of total_sources`
+  must respond) is checked first — if too many sources are down, the
+  result is `no_quorum` rather than letting the reachable minority
+  decide.
+- `create_fact` normalizes every URL (whitespace stripped, scheme and
+  host lowercased, query/fragment boundary detected correctly, trailing
+  slash on bare paths ignored) and rejects the call outright if any two
+  normalized URLs collide. This prevents the same page from being
+  listed multiple times to artificially satisfy the majority
+  requirement. Known limitation: normalization is not a full RFC 3986
+  canonicalizer (e.g. it does not treat `example.com` and
+  `www.example.com` as identical) — it targets the realistic case of
+  copy-paste variation, not adversarial URL obfuscation.
 
 ## Testing notes
 
