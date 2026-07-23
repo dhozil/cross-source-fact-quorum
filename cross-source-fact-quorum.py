@@ -103,8 +103,12 @@ class CrossSourceFactQuorum(gl.Contract):
     def create_fact(self, fact_id: str, question: str, source_urls: list) -> None:
         """Register a fact to be verified across multiple sources.
         `source_urls` should contain at least 3 independent URLs for a
-        meaningful majority quorum; 2 sources can only ever tie or
-        agree, never form a real majority."""
+        meaningful majority quorum. All URLs must be unique after
+        normalization (whitespace stripped, scheme+host lowercased,
+        trailing slash on bare paths ignored) — duplicate or repeated
+        URLs from the same page would allow a single source to satisfy
+        the majority requirement, defeating the purpose of multi-source
+        independence."""
         if fact_id in self.facts:
             raise Exception("fact_id already exists")
         if len(question.strip()) == 0:
@@ -112,8 +116,43 @@ class CrossSourceFactQuorum(gl.Contract):
         if len(source_urls) < 3:
             raise Exception("provide at least 3 source_urls for a meaningful quorum")
 
+        # Normalize and enforce uniqueness: strip whitespace, lowercase
+        # scheme+host so http://Example.com and http://example.com are
+        # treated as the same source. Host boundary is the first of
+        # '/', '?', or '#' — whichever comes first — so query strings
+        # and fragments don't leak into the host comparison.
+        seen = []
+        normalized = []
+        for raw_url in source_urls:
+            url = raw_url.strip()
+            if "://" in url:
+                scheme, rest = url.split("://", 1)
+                host_end = len(rest)
+                for sep in ("/", "?", "#"):
+                    idx = rest.find(sep)
+                    if idx != -1 and idx < host_end:
+                        host_end = idx
+                host = rest[:host_end]
+                path = rest[host_end:]
+                if path == "/":
+                    path = ""
+                elif path.endswith("/"):
+                    path = path[:-1]
+                url_normalized = scheme.lower() + "://" + host.lower() + path
+            else:
+                url_normalized = url.lower()
+
+            if url_normalized in seen:
+                raise Exception(
+                    f"duplicate source URL detected: '{url}'. "
+                    "All source_urls must be independent — repeating the same "
+                    "page defeats the multi-source quorum guarantee."
+                )
+            seen.append(url_normalized)
+            normalized.append(url)
+
         stored_urls = gl.storage.inmem_allocate(DynArray[str], [])
-        for url in source_urls:
+        for url in normalized:
             stored_urls.append(url)
 
         self.facts[fact_id] = FactQuery(
@@ -141,7 +180,8 @@ class CrossSourceFactQuorum(gl.Contract):
 
         def check_quorum() -> str:
             per_source_values = []
-            sources_reached = 0
+            sources_reached = 0      # berhasil di-fetch
+            sources_with_value = 0   # berhasil fetch DAN LLM menemukan jawaban
 
             for url in urls:
                 try:
@@ -170,6 +210,7 @@ If the source does not contain enough information to answer, set
                 if parsed.get("found", False):
                     value = str(parsed.get("value", "unknown")).strip().lower()
                     per_source_values.append(value)
+                    sources_with_value += 1
 
             # Tally votes among sources that produced a value
             tally: dict = {}
@@ -185,12 +226,9 @@ If the source does not contain enough information to answer, set
 
             # Minimum reachability invariant: at least ceil(total/2) sources
             # must be reachable before we even attempt a quorum decision.
-            # If too many sources are down, partial outage must produce
-            # no_quorum rather than letting one reachable source decide.
+            # Partial outage must produce no_quorum instead of lowering the bar.
             min_reachable = (total_sources // 2) + 1
             if sources_reached < min_reachable:
-                final_value = NO_QUORUM
-                agreeing = 0
                 notes = (
                     f"only {sources_reached} of {total_sources} sources reachable "
                     f"(minimum {min_reachable} required)"
@@ -198,9 +236,9 @@ If the source does not contain enough information to answer, set
                 return json.dumps(
                     {
                         "notes": notes,
-                        "sources_agreeing": agreeing,
+                        "sources_agreeing": 0,
                         "sources_total": total_sources,
-                        "value": final_value,
+                        "value": NO_QUORUM,
                     },
                     sort_keys=True,
                 )
@@ -215,7 +253,11 @@ If the source does not contain enough information to answer, set
                 final_value = best_value
                 agreeing = best_count
 
-            notes = f"{sources_reached} of {total_sources} sources reachable, {agreeing} agreed"
+            notes = (
+                f"{sources_reached} of {total_sources} sources reachable, "
+                f"{sources_with_value} contained answer, "
+                f"{agreeing} agreed on final value"
+            )
 
             return json.dumps(
                 {
